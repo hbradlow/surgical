@@ -6,6 +6,64 @@
 #include <openrave/kinbody.h>
 #include "robots/pr2.h"
 
+#include "perception/make_bodies.h"
+
+#include <vtkSmartPointer.h>
+#include <vtkPolyDataMapper.h>
+#include <vtkActor.h>
+#include <vtkParticleReader.h>
+#include <vtkRenderWindow.h>
+#include <vtkRenderWindowInteractor.h>
+#include <vtkRenderer.h>
+#include <vtkVertexGlyphFilter.h>
+#include <vtkGenericDataObjectReader.h>
+#include <vtkStructuredGrid.h>
+#include <vtkFloatArray.h>
+#include <vtkUnstructuredGrid.h>
+#include <vtkRectilinearGrid.h>
+#include <vtkStructuredPoints.h>
+#include <vtkSmartPointer.h>
+#include <vtkPolyData.h>
+#include <string>
+#include <vector>
+
+#include <vtkCellArray.h>
+ 
+#include <sstream>
+
+#include <Wm5Core.h>
+#include <Wm5BSplineCurveFit.h>
+
+#include "simulation/rope.h"
+
+#include <iostream>
+#include <pcl/io/pcd_io.h>
+#include <pcl/visualization/cloud_viewer.h>
+#include <pcl/point_types.h>
+#include <pcl/filters/crop_box.h>
+
+#include "clouds/get_table.h"
+
+BulletSoftObject::Ptr makeTowel(const vector<btVector3>& points, btSoftBodyWorldInfo& worldInfo) {
+  btVector3 offset(0,0,.01*METERS);
+  btSoftBody* psb=btSoftBodyHelpers::CreatePatch(worldInfo,
+                                                 points[0]+offset,
+                                                 points[1]+offset,
+                                                 points[3]+offset,
+                                                 points[2]+offset,
+                                                 45, 31,
+                                                 0/*1+2+4+8*/, true);
+  cout << "points[0] " << points[0].x() << " " << points[0].y() << " " << points[0].z() << endl;
+  psb->getCollisionShape()->setMargin(.01*METERS);
+  btSoftBody::Material* pm=psb->appendMaterial();
+  pm->m_kLST            =       5*0.1;
+  pm->m_kAST = 5*0.1;
+  //    pm->m_flags             -=      btSoftBody::fMaterial::DebugDraw;
+  psb->generateBendingConstraints(2, pm);
+  psb->setTotalMass(1);
+
+  return BulletSoftObject::Ptr(new BulletSoftObject(psb));
+}
 // I've only tested this on the PR2 model
 class PR2SoftBodyGripperAction : public Action {
     RaveRobotKinematicObject::Manipulator::Ptr manip;
@@ -251,6 +309,7 @@ struct CustomScene : public Scene {
     CustomScene() : pr2m(*this) { }
 
     BulletSoftObject::Ptr createCloth(btScalar s, const btVector3 &center);
+    BulletSoftObject::Ptr createMesh(string filename, const btVector3 &center,vector<btVector3> *ctrlPts);
     void createFork();
     void swapFork();
 
@@ -304,8 +363,8 @@ BulletSoftObject::Ptr CustomScene::createCloth(btScalar s, const btVector3 &cent
 
     psb->m_cfg.piterations = 2;
     psb->m_cfg.collisions = btSoftBody::fCollision::CL_SS
-        | btSoftBody::fCollision::CL_RS
-        | btSoftBody::fCollision::CL_SELF;
+        | btSoftBody::fCollision::CL_RS;
+    //    | btSoftBody::fCollision::CL_SELF;
     psb->m_cfg.kDF = 1.0;
     psb->getCollisionShape()->setMargin(0.05);
     btSoftBody::Material *pm = psb->appendMaterial();
@@ -320,6 +379,296 @@ BulletSoftObject::Ptr CustomScene::createCloth(btScalar s, const btVector3 &cent
     }*/
 
     return BulletSoftObject::Ptr(new BulletSoftObject(psb));
+}
+
+BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &center,vector<btVector3> *ctrlPts) {
+	cout << "Center " << (center.getX()) << endl;
+	cout << "Center " << (center.getY()) << endl;
+	cout << "Center " << (center.getZ()) << endl;
+	string line = "/home/henrybrad/Desktop/rope_surface.vtk";
+	vtkSmartPointer<vtkGenericDataObjectReader> reader = 
+	vtkSmartPointer<vtkGenericDataObjectReader>::New();
+	reader->SetFileName(line.c_str());
+	reader->Update();
+
+	btTriangleMesh *mTriMesh = new btTriangleMesh();
+
+
+	vtkPoints* point_array;
+	vtkCellArray* cell_array;
+	if(reader->IsFilePolyData()){
+		point_array = reader->GetPolyDataOutput()->GetPoints();
+		cell_array = reader->GetPolyDataOutput()->GetPolys();
+	}
+	else{
+		point_array = reader->GetUnstructuredGridOutput()->GetPoints();
+		cell_array = reader->GetUnstructuredGridOutput()->GetCells();
+	}
+		cout <<"Not poly data"<<endl;
+		point_array->Print(cout);
+		cell_array->Print(cout);
+		cout << "Point 4: " << *((vtkFloatArray*)point_array->GetData())->GetPointer(3) << endl;
+		cout << "Faces: " << *((vtkIdTypeArray*)cell_array->GetData())->GetPointer(0) << endl;
+		float *ft = ((vtkFloatArray*)point_array->GetData())->GetPointer(0);
+		int *tt = (int*)((vtkIdTypeArray*)cell_array->GetPointer());
+		int t[((cell_array->GetSize()))/4][3];
+		vector<btVector3> points;
+		for(int i = 0; i<((cell_array->GetSize()))/4; i++)
+		{
+			t[i][0] = *(tt+i*8+2);
+			t[i][1] = *(tt+i*8+4);
+			t[i][2] = *(tt+i*8+6);
+			cout << t[i][0] << " "<< t[i][1] << " "<< t[i][2]<<endl;
+
+			btVector3 v0(*(ft+t[i][0]),*(ft+t[i][0]+1),*(ft+t[i][0]+2));
+			btVector3 v1(*(ft+t[i][1]),*(ft+t[i][1]+1),*(ft+t[i][1]+2));
+			btVector3 v2(*(ft+t[i][2]),*(ft+t[i][2]+1),*(ft+t[i][2]+2));
+    			// Then add the triangle to the mesh:
+			points.push_back(v0);
+			points.push_back(v1);
+			points.push_back(v2);
+    			mTriMesh->addTriangle(v0,v1,v2);
+		}
+		float xave = 0;
+		float yave = 0;
+		float zave = 0;
+		int num = 0;
+		for(int i = 0; i<(int)((point_array->GetNumberOfPoints())/1.0); i++)
+		{
+			xave += *(ft+i*3);
+			yave += *(ft+i*3+1);
+			zave += *(ft+i*3+2);
+			num++;
+		}
+		xave = xave/num;
+		yave = yave/num;
+		zave = zave/num;
+		for(int i = 0; i<(int)((point_array->GetNumberOfPoints())/1.0); i++)
+		{
+			*(ft+i*3) -= xave;
+			*(ft+i*3+1) -= yave;
+			*(ft+i*3+2) -= zave;
+		}
+			
+		cout << ((cell_array->GetPointer())) << endl;
+
+
+		cout << "Done making the soft body" << endl;
+	int mVertexCount = (int)((point_array->GetNumberOfPoints())/1.0);
+
+	int dupVertices[mVertexCount];
+      int dupVerticesCount = 0;
+      int i,j;
+      int newIndexes[mVertexCount];
+      for(i=0; i < mVertexCount; i++)
+      {
+         btVector3 v1 =  btVector3(ft[i*3],ft[i*3+1],ft[i*3+2]);
+         dupVertices[i] = -1;
+         newIndexes[i] = i - dupVerticesCount;
+         for(j=0; j < i; j++)
+         {
+            btVector3 v2 =  btVector3(ft[j*3],ft[j*3+1],ft[j*3+2]);;
+            if (v1 == v2) {
+               dupVertices[i] = j;
+               dupVerticesCount++;
+               break;
+            }
+         }
+      }
+      printf("dupVerticesCount %d\n", dupVerticesCount);
+      
+      int newVertexCount = mVertexCount - dupVerticesCount;
+      printf("newVertexCount %d\n", newVertexCount);
+      btScalar vertices[newVertexCount * 3];
+      for(i=0, j=0; i < mVertexCount; i++)
+      {
+         if (dupVertices[i] == -1) {
+            btVector3 v =  btVector3(ft[i*3],ft[i*3+1],ft[i*3+2]);;
+            vertices[j++] = v.getX();
+            vertices[j++] = v.getY();
+            vertices[j++] = v.getZ();
+         }
+      }
+      
+	int mIndexCount  = ((cell_array->GetSize()))*3.0/4;
+      int indexes[mIndexCount];
+      int idx, idxDup;
+      for(i=0; i < mIndexCount; i++)
+      {
+         idx = t[i/3][i%3];
+         idxDup = dupVertices[idx];
+         printf("dup %d\n", idxDup);
+         idx = idxDup == -1 ? idx : idxDup;
+         indexes[i] = newIndexes[idx];
+      }
+      int ntriangles = mIndexCount / 3;
+
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+
+  	if (pcl::io::loadPCDFile<pcl::PointXYZ> ("/home/henrybrad/Desktop/kinfu_tests/test2/cloud.pcd", *cloud) == -1) //* load the file
+  	{
+  	  PCL_ERROR ("Couldn't read file test_pcd.pcd \n");
+  	}
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudrgb(new pcl::PointCloud<pcl::PointXYZRGB>(cloud->width,cloud->height));
+
+	for (size_t i = 0; i < cloud->points.size (); ++i)
+	{
+		pcl::PointXYZRGB p = pcl::PointXYZRGB(0,0,0);		
+		p.x = cloud->points[i].x;
+		p.y = cloud->points[i].y;
+		p.z = cloud->points[i].z;
+		cloudrgb->points.push_back(p);
+	}
+	
+
+	vector<Eigen::Vector3f> corners;
+	Eigen::Vector3f normal;
+	getTable(cloudrgb,corners,normal);
+
+	pcl::PointCloud<pcl::PointXYZRGB> cr(cloud->width,cloud->height);
+
+	float minx = corners[0].x();
+	float maxx = corners[0].x();
+	float miny = corners[0].y();
+	float maxy = corners[0].y();
+	float minz = corners[0].z();
+	float maxz = corners[0].z();
+	for(int i = 1; i<corners.size(); i++)
+	{
+		if(corners[i].x()<minx)
+			minx = corners[i].x();
+		if(corners[i].x()>maxx)
+			maxx = corners[i].x();
+		if(corners[i].y()<miny)
+			miny = corners[i].y();
+		if(corners[i].y()>maxy)
+			maxy = corners[i].y();
+		if(corners[i].z()<minz)
+			minz = corners[i].z();
+		if(corners[i].z()>maxz)
+			maxz = corners[i].z();
+	}
+
+	Eigen::Vector4f min(minx,miny,minz,1);
+	Eigen::Vector4f max(maxx,maxy,maxz,1);
+
+	pcl::CropBox<pcl::PointXYZRGB> cropper;
+	cropper.setInputCloud(cloudrgb);
+	cropper.setMin(min);
+	cropper.setMax(max);
+	cropper.filter(cr);
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudrgb2(new pcl::PointCloud<pcl::PointXYZRGB>(cr));
+/*
+	for (size_t i = 0; i < cloudrgb->points.size (); ++i)
+	{
+		pcl::PointXYZRGB p = cloudrgb->points[i];
+		Eigen::Vector3f v1;	
+		Eigen::Vector3f v2;	
+		Eigen::Vector3f v3;	
+		Eigen::Vector3f v4;	
+		v1 = Eigen::Vector3f(p.x,p.y,p.z) - corners[0];
+		v2 = Eigen::Vector3f(p.x,p.y,p.z) - corners[1];
+		v3 = Eigen::Vector3f(p.x,p.y,p.z) - corners[2];
+		v4 = Eigen::Vector3f(p.x,p.y,p.z) - corners[3];
+		Eigen::Vector3f total = v1+v2+v3+v4;
+		Eigen::Vector3f cross = normal.cross(total);
+		if(cross.norm()<1.5)	
+			cloudrgb2->points.push_back(p);
+	}
+*/
+	for (size_t i = 0; i < cloudrgb->points.size (); ++i)
+	{
+		cloudrgb->points[i].x += .1;
+		cloudrgb->points[i].y += .1;
+		cloudrgb->points[i].z += .1;
+		cloudrgb->points[i].r += 255;
+	}
+
+	pcl::visualization::CloudViewer viewer ("Simple Cloud Viewer");
+   	viewer.showCloud (cloudrgb);
+   	viewer.showCloud (cloudrgb2,"cloud2");
+	while (!viewer.wasStopped ())
+  	{
+  	}
+	
+
+
+	btSoftBody *psb = btSoftBodyHelpers::CreateFromTriMesh(env->bullet->softBodyWorldInfo,vertices, indexes, ntriangles);
+
+	const char * ele = "/home/henrybrad/Desktop/tetgen1.4.3/rope_surface.1.ele";
+	FILE *fp;
+	long len;
+	char *ele_buf;
+	fp=fopen(ele,"rb");
+	fseek(fp,0,SEEK_END); //go to end
+	len=ftell(fp); //get position at end (length)
+	fseek(fp,0,SEEK_SET); //go to beg.
+	ele_buf=(char *)malloc(len); //malloc buffer
+	fread(ele_buf,len,1,fp); //read into buffer
+	fclose(fp);
+	
+	const char * face = "/home/henrybrad/Desktop/tetgen1.4.3/rope_surface.1.face";
+	char *face_buf;
+	fp=fopen(face,"rb");
+	fseek(fp,0,SEEK_END); //go to end
+	len=ftell(fp); //get position at end (length)
+	fseek(fp,0,SEEK_SET); //go to beg.
+	face_buf=(char *)malloc(len); //malloc buffer
+	fread(face_buf,len,1,fp); //read into buffer
+	fclose(fp);
+	cout << "Read Files" << endl;
+
+	const char * node = "/home/henrybrad/Desktop/tetgen1.4.3/rope_surface.1.node";
+	char *node_buf;
+	fp=fopen(node,"rb");
+	fseek(fp,0,SEEK_END); //go to end
+	len=ftell(fp); //get position at end (length)
+	fseek(fp,0,SEEK_SET); //go to beg.
+	node_buf=(char *)malloc(len); //malloc buffer
+	fread(node_buf,len,1,fp); //read into buffer
+	fclose(fp);
+	cout << "Read Files" << endl;
+
+	//btSoftBody *psb = btSoftBodyHelpers::CreateFromTetGenData(env->bullet->softBodyWorldInfo,ele_buf,face_buf,node_buf,false,true,true);
+
+    psb->m_cfg.piterations = 20;
+	psb->setVolumeMass(1);
+    psb->m_cfg.collisions = btSoftBody::fCollision::CL_RS
+	| btSoftBody::fCollision::CL_SS;
+        //| btSoftBody::fCollision::CL_SELF;
+    psb->m_cfg.kDF = .1;
+    //psb->m_cfg.kSSHR_CL = 1.;
+    //psb->m_cfg.kSRHR_CL = 1.;
+    //psb->m_cfg.kSKHR_CL = 1.;
+    //psb->getCollisionShape()->setMargin(0.04);
+    btSoftBody::Material *pm = psb->appendMaterial();
+    pm->m_kLST = .5;
+    psb->generateBendingConstraints(2, pm);
+//    psb->randomizeConstraints();
+	psb->scale(btVector3(35,35,35));
+//	psb->translate(btVector3(-52,-51,15));
+	psb->translate(btVector3(24,0,24));
+    psb->setTotalMass(.001, true);
+    psb->generateClusters(0);
+
+
+/*	Wm5::BSplineCurveFitf b(6,newVertexCount,vertices,5,50);
+	for(float i = 0; i<1; i+=.003){
+		float f[3];
+		b.GetPosition(i,&f[0]);
+
+		f[0] *= 20;
+		f[0] += 20;
+		f[1] *= 20;
+		f[1] += 0;
+		f[2] *= 20;
+		f[2] += 24;
+		
+		ctrlPts->push_back(btVector3(f[0],f[1],f[2]));
+		cout << f[0] << " " << f[1] << " " << f[2] << endl;
+	}
+*/
+    		return BulletSoftObject::Ptr(new BulletSoftObject(psb));
 }
 
 void CustomScene::createFork() {
@@ -373,30 +722,46 @@ void CustomScene::run() {
             btTransform(btQuaternion(0, 0, 0, 1), GeneralConfig::scale * btVector3(1.2, 0, table_height-table_thickness/2))));
     table->rigidBody->setFriction(10);
 
-    BulletSoftObject::Ptr cloth(
-            createCloth(GeneralConfig::scale * 0.25, GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
+	vector<btVector3> ctrlPts;
+//    BulletSoftObject::Ptr cloth(
+//            createCloth(GeneralConfig::scale * 0.25, GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
+	BulletSoftObject::Ptr cloth(createMesh("test",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01),&ctrlPts));
+//cout << "Made it out of createMesh" << endl;
+	//btRigidBody cloth(createMesh("test",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
+cout << "Made it out of createMesh" << endl;
     btSoftBody * const psb = cloth->softBody.get();
     pr2m.pr2->ignoreCollisionWith(psb);
 
+	boost::shared_ptr<CapsuleRope> ropePtr(new CapsuleRope(ctrlPts,.03));
+
+//	for(int i = 0; i<200; i++){
+//		btVector3 v = ctrlPts[i];
+  //  		SphereObject::Ptr sphere(new SphereObject(1, 0.003 * GeneralConfig::scale,
+    //    	        btTransform(btQuaternion(0,0,0, 1), v)));
+//    		env->add(sphere);
+//	}
+
     env->add(table);
+//	env->add(ropePtr);
+	
     env->add(cloth);
 
     leftAction.reset(new PR2SoftBodyGripperAction(pr2m.pr2Left, "l_gripper_l_finger_tip_link", "l_gripper_r_finger_tip_link", 1));
     leftAction->setTarget(psb);
     rightAction.reset(new PR2SoftBodyGripperAction(pr2m.pr2Right, "r_gripper_l_finger_tip_link", "r_gripper_r_finger_tip_link", 1));
-    rightAction->setTarget(psb);
+   rightAction->setTarget(psb);
 
     //setSyncTime(true);
     startViewer();
-    stepFor(dt, 2);
+    stepFor(dt, 3);
 
-    /*
+   
     leftAction->setOpenAction();
     runAction(leftAction, dt);
 
     rightAction->setOpenAction();
     runAction(rightAction, dt);
-    */
+    
 
     startFixedTimestepLoop(dt);
 }
@@ -407,6 +772,8 @@ int main(int argc, char *argv[]) {
     BulletConfig::dt = 0.01;
     BulletConfig::internalTimeStep = 0.01;
     BulletConfig::maxSubSteps = 0;
+
+//	SceneConfig::enableIK = false;
 
     Parser parser;
 

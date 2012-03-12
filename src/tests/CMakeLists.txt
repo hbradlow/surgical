@@ -1,10 +1,16 @@
+find_package(VTK REQUIRED)
+include(${VTK_USE_FILE})
+
 include_directories(
+	${EIGEN3_INCLUDE_DIR}
     ${BULLET_DIR}/src
     ${OpenRAVE_INCLUDE_DIRS}
     ${BULLETSIM_SOURCE_DIR}/src
     ${OSGBULLET_DIR}
+	${WM_INCLUDE_DIR}
+    ${PCL_INCLUDE_DIRS}
 )
-link_directories(${BULLETSIM_BINARY_DIR}/src)
+link_directories(${PCL_LIBRARY_DIRS} ${BULLETSIM_BINARY_DIR}/src ${WM_LIBRARY_DIR} ${WM_ROOT})
 
 add_executable(test_simplescene test_simplescene.cpp)
 target_link_libraries(test_simplescene simulation robots)
@@ -13,7 +19,11 @@ add_executable(test_softbody test_softbody.cpp)
 target_link_libraries(test_softbody simulation)
 
 add_executable(test_cloth_grasping test_cloth_grasping.cpp)
-target_link_libraries(test_cloth_grasping simulation robots)
+if(VTK_LIBRARIES)
+	target_link_libraries(test_cloth_grasping simulation robots clouds ${VTK_LIBRARIES} ${WM_LIBRARIES} ${PCL_LIBRARIES})
+else()
+	target_link_libraries(test_cloth_grasping simulation robots clouds vtkHybrid ${WM_LIBRARIES} ${PCL_LIBRARIES})
+endif()
 
 add_executable(test_rigidbody_grasping test_rigidbody_grasping.cpp)
 target_link_libraries(test_rigidbody_grasping simulation robots)
@@ -23,9 +33,6 @@ target_link_libraries(test_rigidbody_grasping simulation robots)
 
 add_executable(test_rope test_rope.cpp)
 target_link_libraries(test_rope simulation robots)
-
-add_executable(test_plotting test_plotting.cpp)
-target_link_libraries(test_plotting simulation)
 
 add_executable(test_fork test_fork.cpp)
 target_link_libraries(test_fork simulation)
