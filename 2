@@ -24,8 +24,6 @@
 #include <vtkStructuredPoints.h>
 #include <vtkSmartPointer.h>
 #include <vtkPolyData.h>
-#include <vtkMergePoints.h>
-#include <vtkCleanPolyData.h>
 #include <string>
 #include <vector>
 
@@ -37,20 +35,6 @@
 #include <Wm5BSplineCurveFit.h>
 
 #include "simulation/rope.h"
-
-#include <iostream>
-#include <pcl/visualization/cloud_viewer.h>
-#include <pcl/point_types.h>
-#include <pcl/filters/crop_box.h>
-#include <pcl/apps/dominant_plane_segmentation.h>
-
-#include "clouds/get_table.h"
-
-#include "clouds/ply_pipeline.h"
-
-#include <cmath>
-
-
 
 BulletSoftObject::Ptr makeTowel(const vector<btVector3>& points, btSoftBodyWorldInfo& worldInfo) {
   btVector3 offset(0,0,.01*METERS);
@@ -318,7 +302,6 @@ struct CustomScene : public Scene {
 
     BulletSoftObject::Ptr createCloth(btScalar s, const btVector3 &center);
     BulletSoftObject::Ptr createMesh(string filename, const btVector3 &center,vector<btVector3> *ctrlPts);
-    BulletSoftObject::Ptr createMeshFromTetGen(string filename, const btVector3 &center);
     void createFork();
     void swapFork();
 
@@ -389,274 +372,161 @@ BulletSoftObject::Ptr CustomScene::createCloth(btScalar s, const btVector3 &cent
 
     return BulletSoftObject::Ptr(new BulletSoftObject(psb));
 }
-BulletSoftObject::Ptr CustomScene::createMeshFromTetGen(string filename,const btVector3 &center) {
-
-	cout << "CENTER: " << center.x() << " " << center.y() << " " << center.z() << endl;
-	string ele = filename + ".ele";
-	ifstream ele_file(ele.c_str());
-	std::string ele_str((std::istreambuf_iterator<char>(ele_file)),
-			                 std::istreambuf_iterator<char>());
-
-	string face = filename + ".face";
-	ifstream face_file(face.c_str());
-	std::string face_str((std::istreambuf_iterator<char>(face_file)),
-			                 std::istreambuf_iterator<char>());
-	
-	string node = filename + ".node";
-	ifstream node_file(node.c_str());
-	std::string node_str((std::istreambuf_iterator<char>(node_file)),
-			                 std::istreambuf_iterator<char>());
-	
-	btSoftBody *psb = btSoftBodyHelpers::CreateFromTetGenData(env->bullet->softBodyWorldInfo,ele_str.c_str(),face_str.c_str(),node_str.c_str(),true,true,true);
-
-	//set the soft body attributes
-    psb->m_cfg.piterations = 2;
-    psb->m_cfg.collisions = btSoftBody::fCollision::CL_RS
-	| btSoftBody::fCollision::CL_SS;
-        //| btSoftBody::fCollision::CL_SELF;
-    psb->m_cfg.kDF = .1;
-    psb->m_cfg.kSSHR_CL = 1.;
-    psb->m_cfg.kSRHR_CL = 1.;
-    psb->m_cfg.kSKHR_CL = 1.;
-    psb->getCollisionShape()->setMargin(0.04);
-    btSoftBody::Material *pm = psb->appendMaterial();
-    pm->m_kLST = .5;
-	pm->m_flags     +=  btSoftBody::fMaterial::DebugDraw;
-    psb->generateBendingConstraints(2, pm);
-    psb->randomizeConstraints();
-
-
-	psb->setVolumeMass(150);
-    psb->generateClusters(1000);
-	
-	cout << "PSB: " << psb << endl;
-
-
-	return BulletSoftObject::Ptr(new BulletSoftObject(psb));
-}
 
 BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &center,vector<btVector3> *ctrlPts) {
-	string line = "/home/henrybrad/Desktop/kinfu_tests/test11/mesh.vtk";
-	process_raw("/home/henrybrad/Desktop/kinfu_tests/test11/mesh.vtk");
-	vtkSmartPointer<vtkGenericDataObjectReader> reader = vtkSmartPointer<vtkGenericDataObjectReader>::New();
+	cout << "Center " << (center.getX()) << endl;
+	cout << "Center " << (center.getY()) << endl;
+	cout << "Center " << (center.getZ()) << endl;
+	string line = "/home/henrybrad/Desktop/rope.vtk";
+	vtkSmartPointer<vtkGenericDataObjectReader> reader = 
+	vtkSmartPointer<vtkGenericDataObjectReader>::New();
 	reader->SetFileName(line.c_str());
 	reader->Update();
 
+	btTriangleMesh *mTriMesh = new btTriangleMesh();
 
-	vtkPoints* point_array;
-	vtkCellArray* cell_array;
-	vtkPointSet* output;
-
-	vtkSmartPointer<vtkCleanPolyData> cleaner =
-	vtkSmartPointer<vtkCleanPolyData>::New();
-	cleaner->SetInputConnection (reader->GetOutputPort());
-	cleaner->Update();
-	output = cleaner->GetOutput();
-
-	//read the points and cells from the corresponding file format
 	if(reader->IsFilePolyData()){
-		point_array = ((vtkPolyData*)cleaner->GetOutput())->GetPoints();
-		cell_array = ((vtkPolyData*)cleaner->GetOutput())->GetPolys();
-	}
-	else{
-		cout << "Not poly data" << endl;
-		point_array = ((vtkPolyData*)cleaner->GetOutput())->GetPoints();
-		cell_array = ((vtkPolyData*)cleaner->GetOutput())->GetPolys();
-		//point_array = cleaner->GetUnstructuredGridOutput()->GetPoints();
-		//cell_array = cleaner->GetUnstructuredGridOutput()->GetCells();
-	}
-	cout << "Size of set: " << point_array->GetNumberOfPoints() << endl;
-
-	//filter out only the data from the cell array
-	float *ft = ((vtkFloatArray*)point_array->GetData())->GetPointer(0);
-	int *tt = (int*)((vtkIdTypeArray*)cell_array->GetPointer());
-	int *t = (int*)malloc((((cell_array->GetSize()))/4)*3*sizeof(int));
-	for(int i = 0; i<((cell_array->GetSize()))/4; i++)
-	{
-		t[i*3+0] = *(tt+i*8+2);
-		t[i*3+1] = *(tt+i*8+4);
-		t[i*3+2] = *(tt+i*8+6);
-	}
-
-	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudrgb (new pcl::PointCloud<pcl::PointXYZRGB>(1,1));
-	for(int i = 0; i<point_array->GetNumberOfPoints(); i++){
-		pcl::PointXYZRGB p;
-		p.x = ft[i*3];
-		p.y = ft[i*3+1];
-		p.z = ft[i*3+2];
-		p.r = 255; 
-		p.g = 0;
-		p.b = 0;
-		cloudrgb->points.push_back(p);
-	}
-	pcl::visualization::CloudViewer viewer ("Simple Cloud Viewer");
-	   viewer.showCloud (cloudrgb);
-	      while (!viewer.wasStopped ())
-			     {
-					    }
-
-	vector<Eigen::Vector3f> corners;
-	Eigen::Vector3f normal;
-	getTable(cloudrgb,corners,normal,0);
-
-	Eigen::Vector3f c0 = corners[1]-corners[0];
-	Eigen::Vector3f c1 = corners[3]-corners[0];
-
-
-
-
-	//remove duplicate verticies
-	int mVertexCount = (int)((point_array->GetNumberOfPoints())/1.0);
-	int dupVertices[mVertexCount];
-	int dupVerticesCount = 0;
-	int i,j;
-	int newIndexes[mVertexCount];
-	for(i=0; i < mVertexCount; i++)
-	{
-	 btVector3 v1 =  btVector3(ft[i*3],ft[i*3+1],ft[i*3+2]);
-	 dupVertices[i] = -1;
-	 newIndexes[i] = i - dupVerticesCount;
-
-		Eigen::Vector3f p0 = Eigen::Vector3f(ft[i*3],ft[i*3+1],ft[i*3+2])-corners[0];
-
-		if(p0.dot(normal)<.017 || !(p0.dot(c0)>0 && p0.dot(c1)>0 && p0.dot(c0)<c0.dot(c0) && p0.dot(c1)<c1.dot(c1))){
-			dupVertices[i] = -2;
-			dupVerticesCount++;
-		}
-		/*
-	 for(j=0; j < i; j++)
-	 {
-		btVector3 v2 =  btVector3(ft[j*3],ft[j*3+1],ft[j*3+2]);;
-
-		Eigen::Vector3f p0 = Eigen::Vector3f(ft[i*3],ft[i*3+1],ft[i*3+2])-corners[0];
-
-		if(p0.dot(normal)<.06 || !(p0.dot(c0)>0 && p0.dot(c1)>0 && p0.dot(c0)<c0.dot(c0) && p0.dot(c1)<c1.dot(c1))){
-			dupVertices[i] = -2;
-			dupVerticesCount++;
-			break;
-		}
-		if (v1 == v2) {
-		   dupVertices[i] = j;
-		   dupVerticesCount++;
-		   break;
-		}
-	 }*/
-	}
-	printf("dupVerticesCount %d\n", dupVerticesCount);
-
-	int newVertexCount = mVertexCount - dupVerticesCount;
-	printf("newVertexCount %d\n", newVertexCount);
-	btScalar vertices[newVertexCount * 3];
-	for(i=0, j=0; i < mVertexCount; i++)
-	{
-	 if (dupVertices[i] == -1) {
-		btVector3 v =  btVector3(ft[i*3],ft[i*3+1],ft[i*3+2]);;
-		vertices[j++] = v.getX();
-		vertices[j++] = v.getY();
-		vertices[j++] = v.getZ();
-	 }
-	}
-
-	int mIndexCount  = ((cell_array->GetSize()))*3.0/4.0;
-	int *indexes = new int[mIndexCount];
-	int maxIdx = -1;
-	int idx, idxDup;
-	int idx1, idxDup1;
-	int idx2, idxDup2;
-	for(i=0; i < mIndexCount; i+=3)
-	{
-	 idx = t[i];
-	 idx1 = t[i+1];
-	 idx2 = t[i+2];
-	 idxDup = dupVertices[idx];
-	 idxDup1 = dupVertices[idx1];
-	 idxDup2 = dupVertices[idx2];
-		if(idxDup == -2 || idxDup1 == -2 || idxDup2 == -2)
-		{
-			indexes[i] = 0;
-			indexes[i+1] = 0;
-			indexes[i+2] = 0;
-		}
-		else{
-			idx = idxDup == -1 ? idx : idxDup;
-			 indexes[i] = newIndexes[idx];
-			idx1= idxDup1== -1 ? idx1: idxDup1;
-			 indexes[i+1] = newIndexes[idx1];
-			idx2= idxDup2== -1 ? idx2: idxDup2;
-			 indexes[i+2] = newIndexes[idx2];
-		}
-			 if(indexes[i]>maxIdx)
-				 maxIdx = indexes[i];
-			 if(indexes[i+1]>maxIdx)
-				 maxIdx = indexes[i+1];
-			 if(indexes[i+2]>maxIdx)
-				 maxIdx = indexes[i+2];
-	}
-	int ntriangles = mIndexCount / 3;
-
-	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudrgb_seg (new pcl::PointCloud<pcl::PointXYZRGB>(1,1));
-	for(int i = 0; i<maxIdx; i++){
-		pcl::PointXYZRGB p;
-		p.x = vertices[i*3];
-		p.y = vertices[i*3+1];
-		p.z = vertices[i*3+2];
-		p.r = 255; 
-		p.g = 0;
-		p.b = 0;
-		cloudrgb_seg->points.push_back(p);
-	}
-	pcl::visualization::CloudViewer viewer2 ("Simple Cloud Viewer");
-	   viewer2.showCloud (cloudrgb_seg);
-	      while (!viewer2.wasStopped ())
-			     {
-					    }
-
-	Eigen::Vector3f middle = (corners[0] + corners[1] + corners[2] + corners[3])/4.0;
-	Eigen::Vector3f sub = Eigen::Vector3f(center.getX()-middle.x(),center.getY()-middle.y(),center.getZ()-middle.z()); 
-
-	for(int i = 0; i<=maxIdx; i++){
-		vertices[i*3] -= middle.x();
-		vertices[i*3+1] -= middle.y();
-		vertices[i*3+2] -= middle.z();
-	}
+		vtkSmartPointer<vtkPolyData> poly = reader->GetPolyDataOutput();
 	
+		//poly->Print(cout);
+		cout << poly->GetNumberOfPoints() << endl;
+	}
+		cout <<"Not poly data"<<endl;
+		reader->GetUnstructuredGridOutput()->GetPoints()->Print(cout);
+		reader->GetUnstructuredGridOutput()->GetCells()->Print(cout);
+		cout << "Point 4: " << *((vtkFloatArray*)reader->GetUnstructuredGridOutput()->GetPoints()->GetData())->GetPointer(3) << endl;
+		cout << "Faces: " << *((vtkIdTypeArray*)reader->GetUnstructuredGridOutput()->GetCells()->GetData())->GetPointer(0) << endl;
+		float *ft = ((vtkFloatArray*)reader->GetUnstructuredGridOutput()->GetPoints()->GetData())->GetPointer(0);
+		int *tt = (int*)((vtkIdTypeArray*)reader->GetUnstructuredGridOutput()->GetCells()->GetPointer());
+		int t[((reader->GetUnstructuredGridOutput()->GetCells()->GetSize()))/4][3];
+		vector<btVector3> points;
+		for(int i = 0; i<((reader->GetUnstructuredGridOutput()->GetCells()->GetSize()))/4; i++)
+		{
+			t[i][0] = *(tt+i*8+2);
+			t[i][1] = *(tt+i*8+4);
+			t[i][2] = *(tt+i*8+6);
+			cout << t[i][0] << " "<< t[i][1] << " "<< t[i][2]<<endl;
+
+			btVector3 v0(*(ft+t[i][0]),*(ft+t[i][0]+1),*(ft+t[i][0]+2));
+			btVector3 v1(*(ft+t[i][1]),*(ft+t[i][1]+1),*(ft+t[i][1]+2));
+			btVector3 v2(*(ft+t[i][2]),*(ft+t[i][2]+1),*(ft+t[i][2]+2));
+    			// Then add the triangle to the mesh:
+			points.push_back(v0);
+			points.push_back(v1);
+			points.push_back(v2);
+    			mTriMesh->addTriangle(v0,v1,v2);
+		}
+		float xave = 0;
+		float yave = 0;
+		float zave = 0;
+		int num = 0;
+		for(int i = 0; i<(int)((reader->GetUnstructuredGridOutput()->GetPoints()->GetNumberOfPoints())/1.0); i++)
+		{
+			xave += *(ft+i*3);
+			yave += *(ft+i*3+1);
+			zave += *(ft+i*3+2);
+			num++;
+		}
+		xave = xave/num;
+		yave = yave/num;
+		zave = zave/num;
+		for(int i = 0; i<(int)((reader->GetUnstructuredGridOutput()->GetPoints()->GetNumberOfPoints())/1.0); i++)
+		{
+			*(ft+i*3) -= xave;
+			*(ft+i*3+1) -= yave;
+			*(ft+i*3+2) -= zave;
+		}
+			
+		cout << ((reader->GetUnstructuredGridOutput()->GetCells()->GetPointer())) << endl;
+
+
+		cout << "Done making the soft body" << endl;
+	int mVertexCount = (int)((reader->GetUnstructuredGridOutput()->GetPoints()->GetNumberOfPoints())/1.0);
+
+	int dupVertices[mVertexCount];
+      int dupVerticesCount = 0;
+      int i,j;
+      int newIndexes[mVertexCount];
+      for(i=0; i < mVertexCount; i++)
+      {
+         btVector3 v1 =  btVector3(ft[i*3],ft[i*3+1],ft[i*3+2]);
+         dupVertices[i] = -1;
+         newIndexes[i] = i - dupVerticesCount;
+         for(j=0; j < i; j++)
+         {
+            btVector3 v2 =  btVector3(ft[j*3],ft[j*3+1],ft[j*3+2]);;
+            if (v1 == v2) {
+               dupVertices[i] = j;
+               dupVerticesCount++;
+               break;
+            }
+         }
+      }
+      printf("dupVerticesCount %d\n", dupVerticesCount);
+      
+      int newVertexCount = mVertexCount - dupVerticesCount;
+      printf("newVertexCount %d\n", newVertexCount);
+      btScalar vertices[newVertexCount * 3];
+      for(i=0, j=0; i < mVertexCount; i++)
+      {
+         if (dupVertices[i] == -1) {
+            btVector3 v =  btVector3(ft[i*3],ft[i*3+1],ft[i*3+2]);;
+            vertices[j++] = v.getX();
+            vertices[j++] = v.getY();
+            vertices[j++] = v.getZ();
+         }
+      }
+      
+	int mIndexCount  = ((reader->GetUnstructuredGridOutput()->GetCells()->GetSize()))*3.0/4;
+      int indexes[mIndexCount];
+      int idx, idxDup;
+      for(i=0; i < mIndexCount; i++)
+      {
+         idx = t[i/3][i%3];
+         idxDup = dupVertices[idx];
+         printf("dup %d\n", idxDup);
+         idx = idxDup == -1 ? idx : idxDup;
+         indexes[i] = newIndexes[idx];
+      }
+      int ntriangles = mIndexCount / 3;
 
 	btSoftBody *psb = btSoftBodyHelpers::CreateFromTriMesh(env->bullet->softBodyWorldInfo,vertices, indexes, ntriangles);
 
 
-	//set the soft body attributes
+
     psb->m_cfg.piterations = 200;
     psb->m_cfg.collisions = btSoftBody::fCollision::CL_RS
-	| btSoftBody::fCollision::CL_SS;
-        //| btSoftBody::fCollision::CL_SELF;
-    psb->m_cfg.kDF = .1;
-    psb->m_cfg.kSSHR_CL = 1.;
-    psb->m_cfg.kSRHR_CL = 1.;
-    psb->m_cfg.kSKHR_CL = 1.;
-    psb->getCollisionShape()->setMargin(0.04);
+	| btSoftBody::fCollision::CL_SS
+        | btSoftBody::fCollision::CL_SELF;
+    psb->m_cfg.kDF = 0;
+    psb->getCollisionShape()->setMargin(0.01);
     btSoftBody::Material *pm = psb->appendMaterial();
     pm->m_kLST = .5;
     psb->generateBendingConstraints(2, pm);
     psb->randomizeConstraints();
-
-	psb->scale(btVector3(35,35,35));
-
-	btVector3 n(normal.x(),normal.y(),normal.z());
-	btVector3 tableN(0,0,1);
-	psb->rotate(btQuaternion(tableN.cross(n),-acos(((n).dot(tableN))/(n.length()*tableN.length()))));
-
-	btVector3 side(corners[1].x()-corners[0].x(),corners[1].z()-corners[0].z(),corners[1].y()-corners[0].y());
-	btVector3 tableSide(0,0,1);
-	psb->rotate(btQuaternion(tableN,-acos(((side).dot(tableSide))/(side.length()*tableSide.length()))));
-
-	psb->translate(center);
-	psb->translate(btVector3(5,0,0));
-
-    psb->setTotalMass(.001, true);
-    psb->generateClusters(0);
+	psb->scale(btVector3(20,20,20));
+	psb->translate(btVector3(20,0,24));
+    psb->setTotalMass(1, true);
+    psb->generateClusters(1);
 
 
-	return BulletSoftObject::Ptr(new BulletSoftObject(psb));
+	Wm5::BSplineCurveFitf b(3,newVertexCount,vertices,6,50);
+	for(float i = 0; i<1; i+=.003){
+		float f[3];
+		b.GetPosition(i,&f[0]);
+
+		f[0] *= 20;
+		f[0] += 20;
+		f[1] *= 20;
+		f[1] += 0;
+		f[2] *= 20;
+		f[2] += 24;
+		
+		ctrlPts->push_back(btVector3(f[0],f[1],f[2]));
+		cout << f[0] << " " << f[1] << " " << f[2] << endl;
+	}
+
+    		return BulletSoftObject::Ptr(new BulletSoftObject(psb));
 }
 
 void CustomScene::createFork() {
@@ -713,42 +583,42 @@ void CustomScene::run() {
 	vector<btVector3> ctrlPts;
 //    BulletSoftObject::Ptr cloth(
 //            createCloth(GeneralConfig::scale * 0.25, GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
-	BulletSoftObject::Ptr cloth(createMeshFromTetGen("out_tetgen.1",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
+	BulletSoftObject::Ptr cloth(createMesh("test",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01),&ctrlPts));
 //cout << "Made it out of createMesh" << endl;
 	//btRigidBody cloth(createMesh("test",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
 cout << "Made it out of createMesh" << endl;
-    btSoftBody * const psb = cloth->softBody.get();
-    pr2m.pr2->ignoreCollisionWith(psb);
+    //btSoftBody * const psb = cloth->softBody.get();
+    //pr2m.pr2->ignoreCollisionWith(psb);
 
-	boost::shared_ptr<CapsuleRope> ropePtr(new CapsuleRope(ctrlPts,.03));
+	boost::shared_ptr<CapsuleRope> ropePtr(new CapsuleRope(ctrlPts,.03,0,1,1,1));
 
-//	for(int i = 0; i<200; i++){
-//		btVector3 v = ctrlPts[i];
-  //  		SphereObject::Ptr sphere(new SphereObject(1, 0.003 * GeneralConfig::scale,
-    //    	        btTransform(btQuaternion(0,0,0, 1), v)));
-//    		env->add(sphere);
-//	}
+	for(int i = 0; i<200; i++){
+		btVector3 v = ctrlPts[i];
+    		SphereObject::Ptr sphere(new SphereObject(1, 0.003 * GeneralConfig::scale,
+        	        btTransform(btQuaternion(0,0,0, 1), v)));
+    		env->add(sphere);
+	}
 
     env->add(table);
 //	env->add(ropePtr);
 	
-    env->add(cloth);
+    //env->add(cloth);
 
-    leftAction.reset(new PR2SoftBodyGripperAction(pr2m.pr2Left, "l_gripper_l_finger_tip_link", "l_gripper_r_finger_tip_link", 1));
-    leftAction->setTarget(psb);
-    rightAction.reset(new PR2SoftBodyGripperAction(pr2m.pr2Right, "r_gripper_l_finger_tip_link", "r_gripper_r_finger_tip_link", 1));
-   rightAction->setTarget(psb);
+    //leftAction.reset(new PR2SoftBodyGripperAction(pr2m.pr2Left, "l_gripper_l_finger_tip_link", "l_gripper_r_finger_tip_link", 1));
+    //leftAction->setTarget(psb);
+    //rightAction.reset(new PR2SoftBodyGripperAction(pr2m.pr2Right, "r_gripper_l_finger_tip_link", "r_gripper_r_finger_tip_link", 1));
+    //rightAction->setTarget(psb);
 
     //setSyncTime(true);
     startViewer();
     stepFor(dt, 3);
 
    
-    leftAction->setOpenAction();
-    runAction(leftAction, dt);
+  //  leftAction->setOpenAction();
+  //  runAction(leftAction, dt);
 
-    rightAction->setOpenAction();
-    runAction(rightAction, dt);
+  //  rightAction->setOpenAction();
+  //  runAction(rightAction, dt);
     
 
     startFixedTimestepLoop(dt);
@@ -761,7 +631,7 @@ int main(int argc, char *argv[]) {
     BulletConfig::internalTimeStep = 0.01;
     BulletConfig::maxSubSteps = 0;
 
-//	SceneConfig::enableIK = false;
+	SceneConfig::enableIK = false;
 
     Parser parser;
 

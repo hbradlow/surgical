@@ -1,3 +1,6 @@
+find_package(VTK REQUIRED)
+include(${VTK_USE_FILE})
+
 include_directories(
     ${PCL_INCLUDE_DIRS}
     ${WM_INCLUDE_DIR}
@@ -6,16 +9,23 @@ include_directories(
     ${EIGEN3_INCLUDE_DIR}
     ${BULLETSIM_SOURCE_DIR}/src
     ${BULLET_DIR}/src
+	${OpenRAVE_INCLUDE_DIRS}
 )
 link_directories(
   ${PCL_LIBRARY_DIRS} 
   ${WM_LIBRARY_DIR}
+  ${BULLETSIM_BINARY_DIR}/src
 )
 
 add_definitions(${PCL_DEFINITIONS})
 
-add_library(clouds geom.cpp get_table.cpp utils_pcl.cpp cloud_filtering.cpp comm_cv.cpp comm_pcl.cpp utils_cv.cpp)
-target_link_libraries(clouds ${PCL_LIBRARIES} ${WM_LIBRARIES} ${OpenCV_LIBS})
+add_library(clouds geom.cpp ply_pipeline.cpp get_table.cpp utils_pcl.cpp cloud_filtering.cpp comm_cv.cpp comm_pcl.cpp utils_cv.cpp utils_pcl.cpp plane_finding.cpp ground.cpp)
+
+if(VTK_LIBRARIES)
+	target_link_libraries(clouds simulation ${PCL_LIBRARIES} ${WM_LIBRARIES} ${OpenCV_LIBS} ${VTK_LIBRARIES})
+else()
+	target_link_libraries(clouds simulation ${PCL_LIBRARIES} ${WM_LIBRARIES} ${OpenCV_LIBS} vtkHybrid)
+endif()
 
 #add_executable (write_pcds write_pcds.cpp)
 #target_link_libraries (write_pcds ${PCL_LIBRARIES} boost_program_options comm)

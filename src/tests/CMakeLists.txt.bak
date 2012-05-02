@@ -1,17 +1,26 @@
-find_package(VTK REQUIRED)
-include(${VTK_USE_FILE})
-
 include_directories(
-    ${PCL_INCLUDE_DIRS}
-	${EIGEN3_INCLUDE_DIR}
     ${BULLET_DIR}/src
     ${OpenRAVE_INCLUDE_DIRS}
     ${BULLETSIM_SOURCE_DIR}/src
     ${OSGBULLET_DIR}
-	${WM_INCLUDE_DIR}
+#${OPENGL_INCLUDE_DIRS} ${GLUT_INCLUDE_DIRS}
+#	${BULLETSIM_SOURCE_DIR}/src/tests/OpenGL
 )
-link_directories(${PCL_LIBRARY_DIRS} ${BULLETSIM_BINARY_DIR}/src ${WM_LIBRARY_DIR} ${WM_ROOT})
-add_definitions(${PCL_DEFINITIONS})
+
+find_package(VTK REQUIRED)
+include(${VTK_USE_FILE})
+
+
+
+#find_package(GLUT)
+#find_package(OpenGL)
+
+#set(CORELIBS ${GLUT_LIBRARY} ${OPENGL_LIBRARY} m)
+#SUBDIRS(OpenGL)
+
+
+link_directories(${BULLETSIM_BINARY_DIR}/src)
+#link_directories(${BULLETSIM_BINARY_DIR}/src/tests/OpenGl)
 
 add_executable(test_simplescene test_simplescene.cpp)
 target_link_libraries(test_simplescene simulation robots)
@@ -20,11 +29,10 @@ add_executable(test_softbody test_softbody.cpp)
 target_link_libraries(test_softbody simulation)
 
 add_executable(test_cloth_grasping test_cloth_grasping.cpp)
-if(VTK_LIBRARIES)
-	target_link_libraries(test_cloth_grasping simulation robots clouds ${VTK_LIBRARIES} ${WM_LIBRARIES} ${PCL_LIBRARIES})
-else()
-	target_link_libraries(test_cloth_grasping simulation robots clouds vtkHybrid ${WM_LIBRARIES} ${PCL_LIBRARIES})
-endif()
+target_link_libraries(test_cloth_grasping simulation robots ${VTK_LIBRARIES})
+
+#add_executable(test_demo SoftDemo2.cpp main.cpp)
+#target_link_libraries(test_demo simulation robots ${VTK_LIBRARIES} ${GLUT_glut_LIBRARY} ${GLUT_LIBRARY} ${OPENGL_LIBRARY} ${GLUT_glut_LIBRARY} ${OPENGL_gl_LIBRARY} ${OPENGL_glu_LIBRARY} ${BULLETSIM_BINARY_DIR}/src/tests/OpenGl)
 
 add_executable(test_rigidbody_grasping test_rigidbody_grasping.cpp)
 target_link_libraries(test_rigidbody_grasping simulation robots)
@@ -34,6 +42,9 @@ target_link_libraries(test_rigidbody_grasping simulation robots)
 
 add_executable(test_rope test_rope.cpp)
 target_link_libraries(test_rope simulation robots)
+
+add_executable(test_plotting test_plotting.cpp)
+target_link_libraries(test_plotting simulation)
 
 add_executable(test_fork test_fork.cpp)
 target_link_libraries(test_fork simulation)
@@ -52,3 +63,6 @@ target_link_libraries(test_action simulation)
 
 add_executable(test_scene_record test_scene_record.cpp)
 target_link_libraries(test_scene_record simulation)
+
+add_executable(test_bullet bullet_test.cpp)
+target_link_libraries(test_bullet simulation)

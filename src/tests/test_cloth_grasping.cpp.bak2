@@ -39,14 +39,13 @@
 #include "simulation/rope.h"
 
 #include <iostream>
+#include <pcl/io/pcd_io.h>
 #include <pcl/visualization/cloud_viewer.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/crop_box.h>
 #include <pcl/apps/dominant_plane_segmentation.h>
 
 #include "clouds/get_table.h"
-
-#include "clouds/ply_pipeline.h"
 
 #include <cmath>
 
@@ -318,7 +317,6 @@ struct CustomScene : public Scene {
 
     BulletSoftObject::Ptr createCloth(btScalar s, const btVector3 &center);
     BulletSoftObject::Ptr createMesh(string filename, const btVector3 &center,vector<btVector3> *ctrlPts);
-    BulletSoftObject::Ptr createMeshFromTetGen(string filename, const btVector3 &center);
     void createFork();
     void swapFork();
 
@@ -389,55 +387,9 @@ BulletSoftObject::Ptr CustomScene::createCloth(btScalar s, const btVector3 &cent
 
     return BulletSoftObject::Ptr(new BulletSoftObject(psb));
 }
-BulletSoftObject::Ptr CustomScene::createMeshFromTetGen(string filename,const btVector3 &center) {
-
-	cout << "CENTER: " << center.x() << " " << center.y() << " " << center.z() << endl;
-	string ele = filename + ".ele";
-	ifstream ele_file(ele.c_str());
-	std::string ele_str((std::istreambuf_iterator<char>(ele_file)),
-			                 std::istreambuf_iterator<char>());
-
-	string face = filename + ".face";
-	ifstream face_file(face.c_str());
-	std::string face_str((std::istreambuf_iterator<char>(face_file)),
-			                 std::istreambuf_iterator<char>());
-	
-	string node = filename + ".node";
-	ifstream node_file(node.c_str());
-	std::string node_str((std::istreambuf_iterator<char>(node_file)),
-			                 std::istreambuf_iterator<char>());
-	
-	btSoftBody *psb = btSoftBodyHelpers::CreateFromTetGenData(env->bullet->softBodyWorldInfo,ele_str.c_str(),face_str.c_str(),node_str.c_str(),true,true,true);
-
-	//set the soft body attributes
-    psb->m_cfg.piterations = 2;
-    psb->m_cfg.collisions = btSoftBody::fCollision::CL_RS
-	| btSoftBody::fCollision::CL_SS;
-        //| btSoftBody::fCollision::CL_SELF;
-    psb->m_cfg.kDF = .1;
-    psb->m_cfg.kSSHR_CL = 1.;
-    psb->m_cfg.kSRHR_CL = 1.;
-    psb->m_cfg.kSKHR_CL = 1.;
-    psb->getCollisionShape()->setMargin(0.04);
-    btSoftBody::Material *pm = psb->appendMaterial();
-    pm->m_kLST = .5;
-	pm->m_flags     +=  btSoftBody::fMaterial::DebugDraw;
-    psb->generateBendingConstraints(2, pm);
-    psb->randomizeConstraints();
-
-
-	psb->setVolumeMass(150);
-    psb->generateClusters(1000);
-	
-	cout << "PSB: " << psb << endl;
-
-
-	return BulletSoftObject::Ptr(new BulletSoftObject(psb));
-}
 
 BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &center,vector<btVector3> *ctrlPts) {
-	string line = "/home/henrybrad/Desktop/kinfu_tests/test11/mesh.vtk";
-	process_raw("/home/henrybrad/Desktop/kinfu_tests/test11/mesh.vtk");
+	string line = "/home/henrybrad/Desktop/kinfu_tests/test4/mesh.vtk";
 	vtkSmartPointer<vtkGenericDataObjectReader> reader = vtkSmartPointer<vtkGenericDataObjectReader>::New();
 	reader->SetFileName(line.c_str());
 	reader->Update();
@@ -459,7 +411,6 @@ BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &c
 		cell_array = ((vtkPolyData*)cleaner->GetOutput())->GetPolys();
 	}
 	else{
-		cout << "Not poly data" << endl;
 		point_array = ((vtkPolyData*)cleaner->GetOutput())->GetPoints();
 		cell_array = ((vtkPolyData*)cleaner->GetOutput())->GetPolys();
 		//point_array = cleaner->GetUnstructuredGridOutput()->GetPoints();
@@ -471,6 +422,7 @@ BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &c
 	float *ft = ((vtkFloatArray*)point_array->GetData())->GetPointer(0);
 	int *tt = (int*)((vtkIdTypeArray*)cell_array->GetPointer());
 	int *t = (int*)malloc((((cell_array->GetSize()))/4)*3*sizeof(int));
+	vector< vector<int> > *cells = new vector< vector<int> >;
 	for(int i = 0; i<((cell_array->GetSize()))/4; i++)
 	{
 		t[i*3+0] = *(tt+i*8+2);
@@ -478,32 +430,30 @@ BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &c
 		t[i*3+2] = *(tt+i*8+6);
 	}
 
-	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudrgb (new pcl::PointCloud<pcl::PointXYZRGB>(1,1));
-	for(int i = 0; i<point_array->GetNumberOfPoints(); i++){
-		pcl::PointXYZRGB p;
-		p.x = ft[i*3];
-		p.y = ft[i*3+1];
-		p.z = ft[i*3+2];
-		p.r = 255; 
-		p.g = 0;
-		p.b = 0;
-		cloudrgb->points.push_back(p);
+	//bring the centroid of the triangle mesh to the origin
+	float xave = 0;
+	float yave = 0;
+	float zave = 0;
+	int num = 0;
+	for(int i = 0; i<(int)((point_array->GetNumberOfPoints())/1.0); i++)
+	{
+		xave += *(ft+i*3);
+		yave += *(ft+i*3+1);
+		zave += *(ft+i*3+2);
+		num++;
 	}
-	pcl::visualization::CloudViewer viewer ("Simple Cloud Viewer");
-	   viewer.showCloud (cloudrgb);
-	      while (!viewer.wasStopped ())
-			     {
-					    }
-
-	vector<Eigen::Vector3f> corners;
-	Eigen::Vector3f normal;
-	getTable(cloudrgb,corners,normal,0);
-
-	Eigen::Vector3f c0 = corners[1]-corners[0];
-	Eigen::Vector3f c1 = corners[3]-corners[0];
+	xave = xave/num;
+	yave = yave/num;
+	zave = zave/num;
+	for(int i = 0; i<(int)((point_array->GetNumberOfPoints())/1.0); i++)
+	{
+		*(ft+i*3) -= xave;
+		*(ft+i*3+1) -= yave;
+		*(ft+i*3+2) -= zave;
+	}
 
 
-
+/*
 
 	//remove duplicate verticies
 	int mVertexCount = (int)((point_array->GetNumberOfPoints())/1.0);
@@ -516,31 +466,15 @@ BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &c
 	 btVector3 v1 =  btVector3(ft[i*3],ft[i*3+1],ft[i*3+2]);
 	 dupVertices[i] = -1;
 	 newIndexes[i] = i - dupVerticesCount;
-
-		Eigen::Vector3f p0 = Eigen::Vector3f(ft[i*3],ft[i*3+1],ft[i*3+2])-corners[0];
-
-		if(p0.dot(normal)<.017 || !(p0.dot(c0)>0 && p0.dot(c1)>0 && p0.dot(c0)<c0.dot(c0) && p0.dot(c1)<c1.dot(c1))){
-			dupVertices[i] = -2;
-			dupVerticesCount++;
-		}
-		/*
 	 for(j=0; j < i; j++)
 	 {
 		btVector3 v2 =  btVector3(ft[j*3],ft[j*3+1],ft[j*3+2]);;
-
-		Eigen::Vector3f p0 = Eigen::Vector3f(ft[i*3],ft[i*3+1],ft[i*3+2])-corners[0];
-
-		if(p0.dot(normal)<.06 || !(p0.dot(c0)>0 && p0.dot(c1)>0 && p0.dot(c0)<c0.dot(c0) && p0.dot(c1)<c1.dot(c1))){
-			dupVertices[i] = -2;
-			dupVerticesCount++;
-			break;
-		}
 		if (v1 == v2) {
 		   dupVertices[i] = j;
 		   dupVerticesCount++;
 		   break;
 		}
-	 }*/
+	 }
 	}
 	printf("dupVerticesCount %d\n", dupVerticesCount);
 
@@ -557,103 +491,191 @@ BulletSoftObject::Ptr CustomScene::createMesh(string filename,const btVector3 &c
 	 }
 	}
 
-	int mIndexCount  = ((cell_array->GetSize()))*3.0/4.0;
-	int *indexes = new int[mIndexCount];
-	int maxIdx = -1;
+	int mIndexCount  = ((cell_array->GetSize()))*3.0/4;
+	int indexes[mIndexCount];
 	int idx, idxDup;
-	int idx1, idxDup1;
-	int idx2, idxDup2;
-	for(i=0; i < mIndexCount; i+=3)
+	for(i=0; i < mIndexCount; i++)
 	{
-	 idx = t[i];
-	 idx1 = t[i+1];
-	 idx2 = t[i+2];
+	 idx = t[i/3][i%3];
 	 idxDup = dupVertices[idx];
-	 idxDup1 = dupVertices[idx1];
-	 idxDup2 = dupVertices[idx2];
-		if(idxDup == -2 || idxDup1 == -2 || idxDup2 == -2)
-		{
-			indexes[i] = 0;
-			indexes[i+1] = 0;
-			indexes[i+2] = 0;
-		}
-		else{
-			idx = idxDup == -1 ? idx : idxDup;
-			 indexes[i] = newIndexes[idx];
-			idx1= idxDup1== -1 ? idx1: idxDup1;
-			 indexes[i+1] = newIndexes[idx1];
-			idx2= idxDup2== -1 ? idx2: idxDup2;
-			 indexes[i+2] = newIndexes[idx2];
-		}
-			 if(indexes[i]>maxIdx)
-				 maxIdx = indexes[i];
-			 if(indexes[i+1]>maxIdx)
-				 maxIdx = indexes[i+1];
-			 if(indexes[i+2]>maxIdx)
-				 maxIdx = indexes[i+2];
+	 printf("dup %d\n", idxDup);
+	 idx = idxDup == -1 ? idx : idxDup;
+	 indexes[i] = newIndexes[idx];
+	}
+	for(i=0;i<mIndexCount; i+=3){
+	 vector<int> v;
+
+	 v.push_back(indexes[i]);
+	 v.push_back(indexes[i+1]);
+	 v.push_back(indexes[i+2]);
+	 cells->push_back(v);
 	}
 	int ntriangles = mIndexCount / 3;
 
-	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudrgb_seg (new pcl::PointCloud<pcl::PointXYZRGB>(1,1));
-	for(int i = 0; i<maxIdx; i++){
+*/
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new pcl::PointCloud<pcl::PointXYZ>);
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloudrgb (new pcl::PointCloud<pcl::PointXYZRGB>(cloud->width,cloud->height));
+  	if (pcl::io::loadPCDFile<pcl::PointXYZ> ("/home/henrybrad/Desktop/kinfu_tests/test4/cloud.pcd", *cloud) == -1)
+  	{
+  	  PCL_ERROR ("Couldn't read file test_pcd.pcd \n");
+  	}
+	cout << "Size of cloud: " << cloud->points.size() << endl;
+	for(int i = 0; i<cloud->points.size(); i++){
 		pcl::PointXYZRGB p;
-		p.x = vertices[i*3];
-		p.y = vertices[i*3+1];
-		p.z = vertices[i*3+2];
+		p.x = cloud->points[i].x;
+		p.y = cloud->points[i].y;
+		p.z = cloud->points[i].z;
 		p.r = 255; 
 		p.g = 0;
 		p.b = 0;
-		cloudrgb_seg->points.push_back(p);
+		cloudrgb->points.push_back(p);
 	}
-	pcl::visualization::CloudViewer viewer2 ("Simple Cloud Viewer");
-	   viewer2.showCloud (cloudrgb_seg);
-	      while (!viewer2.wasStopped ())
-			     {
-					    }
+	vector<Eigen::Vector3f> corners;
+	Eigen::Vector3f normal;
+	getTable(cloudrgb,corners,normal,0);
 
-	Eigen::Vector3f middle = (corners[0] + corners[1] + corners[2] + corners[3])/4.0;
-	Eigen::Vector3f sub = Eigen::Vector3f(center.getX()-middle.x(),center.getY()-middle.y(),center.getZ()-middle.z()); 
+	Eigen::Vector3f v0 = corners[1]-corners[0];
+	Eigen::Vector3f v1 = corners[3]-corners[0];
+	vector< vector<int> >* cluster_cells = new vector< vector<int> >;
+	vector<float>* cluster_vertices = new vector<float>;
+	int count = 0;
+	for(int i = 0; i<cell_array->GetSize()/4; i++){
+		float *point0 = &ft[t[i*3+0]];
+		float *point1 = &ft[t[i*3+1]];
+		float *point2 = &ft[t[i*3+2]];
 
-	for(int i = 0; i<=maxIdx; i++){
-		vertices[i*3] -= middle.x();
-		vertices[i*3+1] -= middle.y();
-		vertices[i*3+2] -= middle.z();
+		Eigen::Vector3f p0 = Eigen::Vector3f(point0[0],point0[1],point0[2])-corners[0];
+		Eigen::Vector3f p1 = Eigen::Vector3f(point1[0],point1[1],point1[2])-corners[0];
+		Eigen::Vector3f p2 = Eigen::Vector3f(point2[0],point2[1],point2[2])-corners[0];
+
+		if(abs(v0.dot(p0))<v0.dot(v0) && abs(v1.dot(p0))<v1.dot(v1) && p0.dot(normal)>.2
+			&& abs(v0.dot(p1))<v0.dot(v0) && abs(v1.dot(p1))<v1.dot(v1) && p1.dot(normal)>.2
+			&& abs(v0.dot(p2))<v0.dot(v0) && abs(v1.dot(p2))<v1.dot(v1) && p2.dot(normal)>.2){
+			vector<int> points;
+
+			points.push_back(count);
+			points.push_back(count+1);
+			points.push_back(count+2);
+			count+=3;
+			cluster_vertices->push_back(point0[0]);
+			cluster_vertices->push_back(point0[1]);
+			cluster_vertices->push_back(point0[2]);
+
+			cluster_vertices->push_back(point1[0]);
+			cluster_vertices->push_back(point1[1]);
+			cluster_vertices->push_back(point1[2]);
+
+			cluster_vertices->push_back(point2[0]);
+			cluster_vertices->push_back(point2[1]);
+			cluster_vertices->push_back(point2[2]);
+			cluster_cells->push_back(points);
+
+		}
 	}
+	/*
+	for(int i = 0; i<point_array->GetNumberOfPoints(); i+=3){
+		float *point0 = &ft[i];
+
+		Eigen::Vector3f p0 = Eigen::Vector3f(point0[0],point0[1],point0[2])-corners[0];
+
+		if(abs(v0.dot(p0))<v0.dot(v0) && abs(v1.dot(p0))<v1.dot(v1)){
+			cluster_vertices->push_back(point0[0]);
+			cluster_vertices->push_back(point0[1]);
+			cluster_vertices->push_back(point0[2]);
+		}
+	}*/
+
+	//make the soft body
+//	btSoftBody *psb = btSoftBodyHelpers::CreateFromTriMesh(env->bullet->softBodyWorldInfo,vertices, indexes, ntriangles);
 	
+	cout << "HERE " << endl;
+	int* cluster_indexes = new int[cluster_cells->size()*3];
+	float* cluster_vertices_array = new float[cluster_vertices->size()];
+	cout << "SIZE " << cluster_cells->size() << endl;
+	for(int i = 0; i<cluster_cells->size(); i++){
+		cluster_indexes[i*3+0] = (*cluster_cells)[i][0];
+		cluster_indexes[i*3+1] = (*cluster_cells)[i][1];
+		cluster_indexes[i*3+2] = (*cluster_cells)[i][2];
+	}
+	cout << "Num Vertices " << cluster_vertices->size() << endl;
+	for(int i = 0; i<cluster_vertices->size(); i++){
+		cluster_vertices_array[i] = (*cluster_vertices)[i];
+	}
+	cout << "MADE IT HERE" << endl;
 
-	btSoftBody *psb = btSoftBodyHelpers::CreateFromTriMesh(env->bullet->softBodyWorldInfo,vertices, indexes, ntriangles);
+	btSoftBody *psb = btSoftBodyHelpers::CreateFromTriMesh(env->bullet->softBodyWorldInfo,cluster_vertices_array, cluster_indexes, cluster_cells->size());
+/*	cout << "Before print" << endl;
+	for(int i = 0; i<cell_array->GetSize()/4; i++){
+		cout << *(ft+t[i*3+0]) << " " << *(ft+t[i*3+1]) << " " << *(ft+t[i*3+2]) << endl;
+	}
+	cout << "Before psb" << endl;
+	btSoftBody *psb = btSoftBodyHelpers::CreateFromTriMesh(env->bullet->softBodyWorldInfo,ft, t,cell_array->GetSize()/4);*/
+	cout << "MADE IT PAST BTSOFTBODY" << endl;
+
+
+
+
+
+
+	//load tetgen data from files
+	const char * ele = "/home/henrybrad/Desktop/tetgen1.4.3/rope_surface.1.ele";
+	FILE *fp;
+	long len;
+	char *ele_buf;
+	fp=fopen(ele,"rb");
+	fseek(fp,0,SEEK_END); //go to end
+	len=ftell(fp); //get position at end (length)
+	fseek(fp,0,SEEK_SET); //go to beg.
+	ele_buf=(char *)malloc(len); //malloc buffer
+	fread(ele_buf,len,1,fp); //read into buffer
+	fclose(fp);
+	
+	const char * face = "/home/henrybrad/Desktop/tetgen1.4.3/rope_surface.1.face";
+	char *face_buf;
+	fp=fopen(face,"rb");
+	fseek(fp,0,SEEK_END); //go to end
+	len=ftell(fp); //get position at end (length)
+	fseek(fp,0,SEEK_SET); //go to beg.
+	face_buf=(char *)malloc(len); //malloc buffer
+	fread(face_buf,len,1,fp); //read into buffer
+	fclose(fp);
+	cout << "Read Files" << endl;
+
+	const char * node = "/home/henrybrad/Desktop/tetgen1.4.3/rope_surface.1.node";
+	char *node_buf;
+	fp=fopen(node,"rb");
+	fseek(fp,0,SEEK_END); //go to end
+	len=ftell(fp); //get position at end (length)
+	fseek(fp,0,SEEK_SET); //go to beg.
+	node_buf=(char *)malloc(len); //malloc buffer
+	fread(node_buf,len,1,fp); //read into buffer
+	fclose(fp);
+	cout << "Read Files" << endl;
+	
+	//create soft body from tetgen data
+	//btSoftBody *psb = btSoftBodyHelpers::CreateFromTetGenData(env->bullet->softBodyWorldInfo,ele_buf,face_buf,node_buf,false,true,true);
 
 
 	//set the soft body attributes
-    psb->m_cfg.piterations = 200;
+    psb->m_cfg.piterations = 20;
+//	psb->setVolumeMass(1);
     psb->m_cfg.collisions = btSoftBody::fCollision::CL_RS
 	| btSoftBody::fCollision::CL_SS;
         //| btSoftBody::fCollision::CL_SELF;
     psb->m_cfg.kDF = .1;
-    psb->m_cfg.kSSHR_CL = 1.;
-    psb->m_cfg.kSRHR_CL = 1.;
-    psb->m_cfg.kSKHR_CL = 1.;
-    psb->getCollisionShape()->setMargin(0.04);
+    //psb->m_cfg.kSSHR_CL = 1.;
+    //psb->m_cfg.kSRHR_CL = 1.;
+    //psb->m_cfg.kSKHR_CL = 1.;
+    //psb->getCollisionShape()->setMargin(0.04);
     btSoftBody::Material *pm = psb->appendMaterial();
     pm->m_kLST = .5;
     psb->generateBendingConstraints(2, pm);
-    psb->randomizeConstraints();
-
-	psb->scale(btVector3(35,35,35));
-
-	btVector3 n(normal.x(),normal.y(),normal.z());
-	btVector3 tableN(0,0,1);
-	psb->rotate(btQuaternion(tableN.cross(n),-acos(((n).dot(tableN))/(n.length()*tableN.length()))));
-
-	btVector3 side(corners[1].x()-corners[0].x(),corners[1].z()-corners[0].z(),corners[1].y()-corners[0].y());
-	btVector3 tableSide(0,0,1);
-	psb->rotate(btQuaternion(tableN,-acos(((side).dot(tableSide))/(side.length()*tableSide.length()))));
-
-	psb->translate(center);
-	psb->translate(btVector3(5,0,0));
-
+//    psb->randomizeConstraints();
+	psb->scale(btVector3(15,15,15));
+//	psb->translate(btVector3(-52,-51,15));
+	psb->translate(btVector3(24,0,24));
     psb->setTotalMass(.001, true);
-    psb->generateClusters(0);
+    psb->generateClusters(1);
 
 
 	return BulletSoftObject::Ptr(new BulletSoftObject(psb));
@@ -713,7 +735,7 @@ void CustomScene::run() {
 	vector<btVector3> ctrlPts;
 //    BulletSoftObject::Ptr cloth(
 //            createCloth(GeneralConfig::scale * 0.25, GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
-	BulletSoftObject::Ptr cloth(createMeshFromTetGen("out_tetgen.1",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
+	BulletSoftObject::Ptr cloth(createMesh("test",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01),&ctrlPts));
 //cout << "Made it out of createMesh" << endl;
 	//btRigidBody cloth(createMesh("test",GeneralConfig::scale * btVector3(0.9, 0, table_height+0.01)));
 cout << "Made it out of createMesh" << endl;

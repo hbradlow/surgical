@@ -39,6 +39,9 @@ target_link_libraries(perception ${PCL_LIBRARIES} comm2 clouds simulation tetgen
 add_executable(test_matching test_matching.cpp matching.cpp)
 target_link_libraries(test_matching perception)
 
+add_executable(kinfu_reconstruction kinfu_reconstruction.cpp)
+target_link_libraries(kinfu_reconstruction clouds)
+
 add_executable(test_prob_corr test_prob_corr.cpp)
 target_link_libraries(test_prob_corr perception)
 

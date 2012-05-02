@@ -3,6 +3,7 @@
 #include "geom.h"
 #include <iostream>
 #include <vector>
+#include <sstream>
 #include <pcl/common/eigen.h>
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
@@ -20,8 +21,13 @@ using namespace pcl;
 using namespace std;
 using namespace Eigen;
 
+VectorXf toVectorXf1(const vector<float>& in) {
+  VectorXf out(in.size());
+  for (int i=0; i < in.size(); i++) out(i) = in[i];
+  return out;
+}
 
-void getTable(PointCloud<PointXYZRGB>::Ptr cloud, vector<Vector3f>& corners, Vector3f& normal) {
+void getTable(PointCloud<PointXYZRGB>::Ptr cloud, vector<Vector3f>& corners, Vector3f& normal, int skip) {
   // downsample -> cloud_down
   // get nearby points -> cloud_near
   // get plane -> cloud_table
@@ -37,13 +43,12 @@ void getTable(PointCloud<PointXYZRGB>::Ptr cloud, vector<Vector3f>& corners, Vec
   PointCloud<PointXYZRGB>::Ptr cloud_near(new PointCloud<PointXYZRGB>);
   PassThrough<PointXYZRGB> extract_near;
   extract_near.setInputCloud(cloud_down);
-  extract_near.setFilterFieldName("z");
-  extract_near.setFilterLimits(0,2);
+  extract_near.setFilterFieldName("x");
+  extract_near.setFilterLimits(-25,25);
   extract_near.setFilterLimitsNegative(false);
   extract_near.filter(*cloud_near);
 
 
-  //PointCloud<PointXYZRGB>::Ptr cloud_plane(new PointCloud<PointXYZRGB>);
   pcl::ModelCoefficients::Ptr coeffs (new pcl::ModelCoefficients ());
   pcl::PointIndices::Ptr inliers (new pcl::PointIndices ());
   SACSegmentation<PointXYZRGB> seg;
@@ -53,37 +58,53 @@ void getTable(PointCloud<PointXYZRGB>::Ptr cloud, vector<Vector3f>& corners, Vec
   seg.setMaxIterations(100);
   seg.setDistanceThreshold(.0025);
   seg.setInputCloud(cloud_near);
-  seg.segment(*inliers,*coeffs);
-  // ExtractIndices<PointXYZRGB> extract_plane;
-  // extract_plane.setInputCloud(cloud_near);
-  // extract_plane.setIndices(inliers);
-  // extract_plane.setNegative(false);
-  // extract_plane.filter(*cloud_plane);
+  seg.segment(*inliers,*coeffs); 
 
-  PointCloud<PointXYZRGB>::Ptr cloud_plane2(new PointCloud<PointXYZRGB>);
-  pcl::ProjectInliers<pcl::PointXYZRGB> proj;
-  proj.setModelType (pcl::SACMODEL_PLANE);
-  proj.setInputCloud (cloud_near);
-  proj.setModelCoefficients (coeffs);
-  proj.filter (*cloud_plane2);
+  PointCloud<PointXYZRGB>::Ptr cloud_plane(new PointCloud<PointXYZRGB>);
 
-  PointCloud<PointXYZRGB>::Ptr cloud_cluster(new PointCloud<PointXYZRGB>);
+  Vector4f coeffsEigen = toVectorXf1(coeffs->values);
+  BOOST_FOREACH(const PointXYZRGB& pt, cloud_down->points) {
+    Vector4f xyz1 = pt.getVector4fMap();
+    xyz1(3) = 1;
+    if (fabs(xyz1.dot(coeffsEigen)) < .01) cloud_plane->push_back(pt);
+  }
+
+  cloud_plane->width = cloud_plane->size();
+  cloud_plane->height = 1;
+
+  // pcl::ProjectInliers<pcl::PointXYZRGB> proj;
+  // proj.setModelType(SACMODEL_PLANE);
+  // proj.setModelCoefficients(coeffs);
+  // proj.setInputCloud (cloud_down);
+  // proj.setIndices(inliers1);
+  // proj.setModelCoefficients (coeffs);
+  // proj.filter (*cloud_plane);
+
   std::vector<pcl::PointIndices> cluster_indices;
   pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
   pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
-  ec.setClusterTolerance (0.02); // 2cm
+  ec.setClusterTolerance (0.02);
   ec.setMinClusterSize (500);
   ec.setMaxClusterSize (250000);
   ec.setSearchMethod (tree);
-  ec.setInputCloud(cloud_plane2);
+  ec.setInputCloud(cloud_plane);
   ec.extract (cluster_indices);
-  std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin();
-  for (std::vector<int>::const_iterator pit = it->indices.begin (); pit != it->indices.end (); pit++)
-    cloud_cluster->push_back(cloud_plane2->points[*pit]);
+
+  cout << "num clust: " << cluster_indices.size() << endl;
+
+
+  PointCloud<PointXYZRGB>::Ptr cloud_cluster(new PointCloud<PointXYZRGB>);
+
+  BOOST_FOREACH(int pind, cluster_indices[skip].indices) {
+    cloud_cluster->push_back(cloud_plane->points[pind]);
+  }
+
   cloud_cluster->width = cloud_cluster->points.size ();
   cloud_cluster->height = 1;
   cloud_cluster->is_dense = true;
 
+  stringstream ss;
+  ss << "/tmp/clu" << skip << ".pcd";
 
   vector<Vector3f> tablePts;
   Vector4f abcd(coeffs->values[0],coeffs->values[1],coeffs->values[2],coeffs->values[3]);
